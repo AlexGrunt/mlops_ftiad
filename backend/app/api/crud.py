@@ -187,6 +187,7 @@ def get_info():
         },
     ]
 
+
 def get_predictions(model: schemas.ModelBase):
     if not model_exists(model):
         raise HTTPException(
@@ -194,11 +195,6 @@ def get_predictions(model: schemas.ModelBase):
             detail="There are no model of this class with such name! Please, check existing models.",
         )
 
-    pathlist = Path("app/models/").glob("**/*.json")
-    for path in pathlist:
-        with open(path, "r") as file:
-            model = dill.load(file)
-    return list(model.predict(get_dataset(model.classification)[0]))
-
-
-    
+    with open(f"app/models/{model.name}.dill", "rb") as file:
+        estimator = dill.load(file)
+    return list(estimator.predict(get_dataset(model.classification)[0]))
