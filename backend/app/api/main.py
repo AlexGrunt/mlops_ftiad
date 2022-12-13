@@ -1,8 +1,30 @@
 from fastapi import FastAPI, status
 from typing import List, Union
-from app.api import schemas, crud
+from app.api import schemas, crud, models
+from app.api.database import SessionLocal, engine
+from app.core.config import SCHEMA_NAME
+from sqlalchemy.schema import CreateSchema
+
 
 app = FastAPI()
+
+class SessionManager:
+    def __init__(self):
+        self.db = SessionLocal()
+
+    def __enter__(self):
+        return self.db
+
+    def __exit__(self, _, _a, _b):
+        self.db.close()
+
+
+@app.on_event("startup")
+async def startup_event():
+    if not engine.dialect.has_schema(engine, SCHEMA_NAME):
+        engine.execute(CreateSchema(SCHEMA_NAME))
+    models.Base.metadata.create_all(bind=engine)
+    crud.do_etl()
 
 
 @app.get(
@@ -50,3 +72,8 @@ def predict_model(model_name: str, model_class: str, classification: bool):
             )
         )
     ])
+
+@app.post("/model/fit/db", status_code=status.HTTP_200_OK)
+def fit_model_db(model: Union[schemas.RidgeModel, schemas.LassoModel, schemas.DecisionTreeModel]):
+    with SessionManager() as session_local:
+        return crud.model_fit(model, db=True, session=session_local)
