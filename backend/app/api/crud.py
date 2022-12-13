@@ -1,20 +1,20 @@
-import pandas as pd
-import numpy as np
 import json
-import dill
 import os
-
 from pathlib import Path
-from sklearn import linear_model
+from typing import Union
+
+import dill
+import numpy as np
+import pandas as pd
 import sklearn
+from app.api import models, schemas
+from app.api.database import engine
+from app.core.config import SCHEMA_NAME
+from fastapi import HTTPException, status
+from sklearn import linear_model
+from sklearn.datasets import load_diabetes, load_wine
 from sklearn.model_selection import cross_val_score
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
-from sklearn.datasets import load_wine, load_diabetes
-from fastapi import HTTPException, status
-
-from app.api import schemas
-
-from typing import Union
 
 
 def get_models():
@@ -44,12 +44,28 @@ def model_exists(model: schemas.BaseModel):
     return False
 
 
-def get_dataset(classification: bool):
+def get_dataset(classification: bool, db, session):
+    if db and session is not None:
+        if classification:
+            data = pd.read_sql(session.query(models.WineDataset).all(), engine)
+        else:
+            data = pd.read_sql(session.query(
+                models.DiabetesDataset).all(), engine)
+        return data.drop(columns=['target']), data['target']
     if classification:
         data = load_wine()
-        return data.data, data.target
-    data = load_diabetes()
+    else:
+        data = load_diabetes()
     return data.data, data.target
+
+
+def do_etl():
+    wine = get_dataset(True)
+    wine.to_sql('wine_dataset', con=engine, schema=SCHEMA_NAME,
+                if_exists='replace', index=True)
+    diabets = get_dataset(False)
+    diabets.to_sql('diabetes_dataset', con=engine,
+                   schema=SCHEMA_NAME, if_exists='replace', index=True)
 
 
 def get_tree_model(model: schemas.DecisionTreeModel):
@@ -101,7 +117,8 @@ def get_ridge_model(model: schemas.RidgeModel):
 
 
 def get_estimator(
-    model: Union[schemas.RidgeModel, schemas.LassoModel, schemas.DecisionTreeModel]
+    model: Union[schemas.RidgeModel,
+                 schemas.LassoModel, schemas.DecisionTreeModel]
 ):
     if model.model_class == "RidgeModel":
         return get_ridge_model(model)
@@ -117,9 +134,9 @@ def get_estimator(
 
 
 def fit_and_save(
-    model: Union[schemas.RidgeModel, schemas.LassoModel, schemas.DecisionTreeModel]
+    model: Union[schemas.RidgeModel, schemas.LassoModel, schemas.DecisionTreeModel], db=False, session=None
 ):
-    X, y = get_dataset(model.classification)
+    X, y = get_dataset(model.classification, db, session)
 
     estimator = get_estimator(model).fit(X, y)
 
@@ -137,7 +154,7 @@ def fit_and_save(
 
 
 def model_fit(
-    model: Union[schemas.RidgeModel, schemas.LassoModel, schemas.DecisionTreeModel]
+    model: Union[schemas.RidgeModel, schemas.LassoModel, schemas.DecisionTreeModel], db=False, session=None
 ):
     if model_exists(model):
         raise HTTPException(
@@ -145,7 +162,7 @@ def model_fit(
             detail="Model of this class with such name already exists",
         )
 
-    fit_and_save(model)
+    fit_and_save(model, db, session)
 
     return "Model created successfully"
 
@@ -164,7 +181,8 @@ def delete_model(model: schemas.BaseModel):
 
 
 def refit_model(
-    model: Union[schemas.RidgeModel, schemas.LassoModel, schemas.DecisionTreeModel]
+    model: Union[schemas.RidgeModel,
+                 schemas.LassoModel, schemas.DecisionTreeModel]
 ):
     if not model_exists(model):
         raise HTTPException(
@@ -179,7 +197,8 @@ def refit_model(
 
 def get_info():
     return [
-        {"model_class": "RidgeModel", "target": ["classification", "regression"]},
+        {"model_class": "RidgeModel", "target": [
+            "classification", "regression"]},
         {"model_class": "LassoModel", "target": ["regression"]},
         {
             "model_class": "DecisionTreeModel",
